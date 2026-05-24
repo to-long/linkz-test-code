@@ -1,0 +1,24 @@
+{
+  "name": "seat-reservation",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --filter '*' dev",
+    "dev:be": "bun run --filter @seat-reservation/be dev",
+    "dev:fe": "bun run --filter @seat-reservation/fe dev",
+    "lint": "bunx biome check .",
+    "format": "bunx biome format --write .",
+    "openapi-gen": "bunx openapi-typescript http://localhost:8081/api/openapi.json -o apps/fe/src/lib/api-types.ts"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "dependencies": {
+    "@inlang/paraglide-js": "^2.18.1",
+    "react-intl": "^10.1.9"
+  },
+  "devDependencies": {
+    "@inlang/paraglide-webpack": "^1.1.5",
+    "openapi-typescript": "^7.13.0"
+  }
+}

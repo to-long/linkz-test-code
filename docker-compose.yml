@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      - "5438:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: seat_reservation
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  stripe-cli:
+    image: stripe/stripe-cli:latest
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - stripe listen --api-key $$STRIPE_SECRET_KEY --forward-to http://host.docker.internal:8081/api/stripe/webhook
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  pgdata:
