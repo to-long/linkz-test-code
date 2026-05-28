@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { useSignIn } from "@clerk/clerk-react";
 import * as m from "../../paraglide/messages.js";
 import { useLocale } from "../../lib/i18n";
-import { signIn } from "../../lib/auth-client";
 import { AppLayout } from "../../components/app-layout";
 import { GoogleSignInButton } from "./google-sign-in-button";
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const { signIn, setActive } = useSignIn();
   useLocale();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -16,18 +17,24 @@ export function LoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!signIn) return;
     setError("");
     setLoading(true);
 
     try {
-      const result = await signIn.email({ email, password });
-      if (result.error) {
-        setError(result.error.message || "Login failed");
-      } else {
+      const result = await signIn.create({
+        identifier: email,
+        password,
+      });
+
+      if (result.status === "complete" && setActive) {
+        await setActive({ session: result.createdSessionId });
         navigate("/");
+      } else {
+        setError("Login failed. Please try again.");
       }
-    } catch {
-      setError("Login failed. Please try again.");
+    } catch (err: any) {
+      setError(err.errors?.[0]?.longMessage || err.message || "Login failed. Please try again.");
     } finally {
       setLoading(false);
     }

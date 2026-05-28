@@ -37,7 +37,7 @@
   "proceed_to_payment": "去付款",
   "release": "释放",
   "loading_seats": "加载座位中...",
-  "hold_expires_note": "座位保留将在 10 分钟后过期。请完成付款以确认预订。",
+  "hold_expires_note": "座位保留将在 10 分钟后过期。进入付款后将自动延长至 30 分钟。",
 
   "redirecting_to_stripe": "正在跳转到 Stripe 支付...",
   "secure_payment_redirect": "您将被重定向到安全支付页面",

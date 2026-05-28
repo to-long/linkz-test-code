@@ -3,11 +3,12 @@ import { useNavigate } from "react-router-dom";
 import * as m from "../paraglide/messages.js";
 import { useLocale, localeLabels, type Locale } from "../lib/i18n";
 import { useTheme } from "../lib/theme";
-import { useSession, signOut } from "../lib/auth-client";
+import { useSession, useSignOut } from "../lib/auth-client";
 import { getInitials } from "../lib/format";
 
 export function MobileMenu() {
   const { data: session } = useSession();
+  const clerkSignOut = useSignOut();
   const { locale, setLocale } = useLocale();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
@@ -119,7 +120,7 @@ export function MobileMenu() {
 
             {user && (
               <button
-                onClick={async () => { await signOut(); navigate("/login"); }}
+                onClick={async () => { await clerkSignOut(); navigate("/login"); }}
                 className="flex items-center gap-3 w-full py-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-left"
               >
                 <svg className="w-5 h-5 text-[#CC3314]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { useSignUp } from "@clerk/clerk-react";
 import * as m from "../../paraglide/messages.js";
 import { useLocale } from "../../lib/i18n";
-import { signUp } from "../../lib/auth-client";
 import { AppLayout } from "../../components/app-layout";
 import { GoogleSignInButton } from "./google-sign-in-button";
 
 export function SignupPage() {
   const navigate = useNavigate();
+  const { signUp, setActive } = useSignUp();
   useLocale();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -17,18 +18,30 @@ export function SignupPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!signUp) return;
     setError("");
     setLoading(true);
 
     try {
-      const result = await signUp.email({ name, email, password });
-      if (result.error) {
-        setError(result.error.message || "Signup failed");
-      } else {
+      const [firstName, ...rest] = name.trim().split(" ");
+      const lastName = rest.join(" ");
+
+      const result = await signUp.create({
+        firstName,
+        lastName: lastName || undefined,
+        emailAddress: email,
+        password,
+      });
+
+      if (result.status === "complete" && setActive) {
+        await setActive({ session: result.createdSessionId });
         navigate("/");
+      } else {
+        // May need email verification — check result.status
+        setError("Please check your email to verify your account.");
       }
-    } catch {
-      setError("Signup failed. Please try again.");
+    } catch (err: any) {
+      setError(err.errors?.[0]?.longMessage || err.message || "Signup failed. Please try again.");
     } finally {
       setLoading(false);
     }

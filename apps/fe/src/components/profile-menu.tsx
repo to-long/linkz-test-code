@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import * as m from "../paraglide/messages.js";
 import { useLocale } from "../lib/i18n";
-import { useSession, signOut } from "../lib/auth-client";
+import { useSession, useSignOut } from "../lib/auth-client";
 import { getInitials } from "../lib/format";
 import { useClickOutside } from "../lib/hooks/use-click-outside";
 
@@ -20,8 +20,9 @@ export function ProfileMenu() {
   const user = session.user;
   const initials = getInitials(user.name || user.email || "U");
 
+  const clerkSignOut = useSignOut();
   async function handleLogout() {
-    await signOut();
+    await clerkSignOut();
     navigate("/login");
   }
 

@@ -37,7 +37,7 @@
   "proceed_to_payment": "Lanjut ke Pembayaran",
   "release": "Lepaskan",
   "loading_seats": "Memuat kursi...",
-  "hold_expires_note": "Reservasi Anda kedaluwarsa dalam 10 menit. Selesaikan pembayaran untuk mengonfirmasi.",
+  "hold_expires_note": "Reservasi Anda kedaluwarsa dalam 10 menit. Setelah melanjutkan ke pembayaran, waktu akan diperpanjang menjadi 30 menit.",
 
   "redirecting_to_stripe": "Mengalihkan ke Stripe Checkout...",
   "secure_payment_redirect": "Anda akan dialihkan ke halaman pembayaran aman",

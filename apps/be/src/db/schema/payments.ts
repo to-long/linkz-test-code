@@ -12,6 +12,8 @@ export const paymentStatusEnum = pgEnum("payment_status", [
   "completed",
   "failed",
   "expired",
+  "refund_pending",
+  "refunded",
 ]);
 
 export const payments = pgTable("payments", {

@@ -2,14 +2,21 @@ import { eq, and, inArray } from "drizzle-orm";
 import { db, payments, seats, reservations } from "../../db";
 import { stripe } from "../../lib/stripe";
 import { reserveSeat } from "../seats/service";
+import { scheduleRelease } from "../../lib/hold-scheduler";
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3031";
 
 type TransactionClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
+type CompleteResult =
+  | { status: "ok" }
+  | { status: "already_processed" }
+  | { status: "seats_unavailable"; paymentIntentId: string; failedSeatIds: string[] };
+
 /**
  * Shared helper: marks a payment as completed and reserves all associated seats.
  * Must be called within a transaction.
+ * Returns status so the caller can trigger a refund if seats are unavailable.
  */
 async function completePaymentAndReserveSeats(
   tx: TransactionClient,
@@ -17,7 +24,7 @@ async function completePaymentAndReserveSeats(
   paymentIntentId: string,
   seatIds: string[],
   userId: string,
-): Promise<boolean> {
+): Promise<CompleteResult> {
   const [updated] = await tx
     .update(payments)
     .set({
@@ -33,15 +40,14 @@ async function completePaymentAndReserveSeats(
     .returning();
 
   if (!updated) {
-    return false;
+    return { status: "already_processed" };
   }
 
+  const failedSeatIds: string[] = [];
   for (const seatId of seatIds) {
     const reserved = await reserveSeat(seatId, userId);
     if (!reserved) {
-      console.error(
-        `Seat ${seatId} reservation failed after payment ${paymentId}`,
-      );
+      failedSeatIds.push(seatId);
       continue;
     }
 
@@ -52,7 +58,44 @@ async function completePaymentAndReserveSeats(
     });
   }
 
-  return true;
+  if (failedSeatIds.length > 0) {
+    // Mark payment as refund-pending so we can issue refund outside the tx
+    await tx
+      .update(payments)
+      .set({ status: "refund_pending" })
+      .where(eq(payments.id, paymentId));
+
+    return { status: "seats_unavailable", paymentIntentId, failedSeatIds };
+  }
+
+  return { status: "ok" };
+}
+
+/**
+ * Issue a full refund via Stripe when seats become unavailable after payment.
+ */
+async function issueAutoRefund(paymentId: string, paymentIntentId: string) {
+  try {
+    const refund = await stripe.refunds.create({
+      payment_intent: paymentIntentId,
+      reason: "requested_by_customer",
+    });
+
+    await db
+      .update(payments)
+      .set({ status: "refunded" })
+      .where(eq(payments.id, paymentId));
+
+    console.log(
+      `💸 Auto-refund issued: payment=${paymentId}, refund=${refund.id}`,
+    );
+  } catch (err: any) {
+    console.error(
+      `Auto-refund failed for payment ${paymentId}:`,
+      err.message,
+    );
+    // Payment stays in "refund_pending" — requires manual intervention
+  }
 }
 
 export async function createCheckoutSession(seatIds: string[], userId: string) {
@@ -76,7 +119,19 @@ export async function createCheckoutSession(seatIds: string[], userId: string) {
   const totalAmount = seatRows.reduce((sum, s) => sum + s.price, 0);
 
   // Stripe requires minimum 30 minutes for Checkout Session expiry
+  // Extend seat holds to match so they don't expire mid-checkout
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+
+  for (const seat of seatRows) {
+    await db
+      .update(seats)
+      .set({ heldUntil: expiresAt, updatedAt: new Date() })
+      .where(and(eq(seats.id, seat.id), eq(seats.heldBy, userId)));
+    scheduleRelease(seat.id, expiresAt);
+  }
+  console.log(
+    `⏱ Extended hold TTL to 30 min for seats: ${seatRows.map((s) => s.label).join(", ")}`,
+  );
 
   // Create internal payment record
   const [payment] = await db
@@ -142,24 +197,33 @@ export async function handleStripeWebhook(event: any) {
       return;
     }
 
-    await db.transaction(async (tx) => {
-      const success = await completePaymentAndReserveSeats(
+    const result = await db.transaction(async (tx) => {
+      return completePaymentAndReserveSeats(
         tx,
         paymentId,
         session.payment_intent,
         seatIds,
         userId,
       );
-
-      if (!success) {
-        console.error(`Payment ${paymentId} already processed or not found`);
-        return;
-      }
-
-      console.log(
-        `✓ Reservation completed: seats=${seatIds.join(",")}, payment=${paymentId}`,
-      );
     });
+
+    if (result.status === "already_processed") {
+      console.error(`Payment ${paymentId} already processed or not found`);
+      return;
+    }
+
+    if (result.status === "seats_unavailable") {
+      // Auto-refund: seats were taken while user was on Stripe Checkout
+      console.error(
+        `⚠ Seats unavailable after payment ${paymentId}: ${result.failedSeatIds.join(",")}. Issuing auto-refund.`,
+      );
+      await issueAutoRefund(paymentId, result.paymentIntentId);
+      return;
+    }
+
+    console.log(
+      `✓ Reservation completed: seats=${seatIds.join(",")}, payment=${paymentId}`,
+    );
   }
 
   if (event.type === "checkout.session.expired") {
@@ -231,10 +295,10 @@ export async function getPaymentByStripeSession(
           `Fallback: verifying payment ${payment.id} via Stripe API`,
         );
 
-        await db.transaction(async (tx) => {
-          const seatIds: string[] = JSON.parse(payment.seatIds);
+        const seatIds: string[] = JSON.parse(payment.seatIds);
 
-          await completePaymentAndReserveSeats(
+        const result = await db.transaction(async (tx) => {
+          return completePaymentAndReserveSeats(
             tx,
             payment.id,
             session.payment_intent as string,
@@ -243,9 +307,16 @@ export async function getPaymentByStripeSession(
           );
         });
 
-        console.log(
-          `✓ Fallback reservation completed: payment=${payment.id}`,
-        );
+        if (result.status === "seats_unavailable") {
+          console.error(
+            `⚠ Fallback: seats unavailable for payment ${payment.id}. Issuing auto-refund.`,
+          );
+          await issueAutoRefund(payment.id, result.paymentIntentId);
+        } else if (result.status === "ok") {
+          console.log(
+            `✓ Fallback reservation completed: payment=${payment.id}`,
+          );
+        }
 
         // Re-fetch updated data
         const [freshPayment] = await db

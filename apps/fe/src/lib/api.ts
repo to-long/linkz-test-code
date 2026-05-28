@@ -1,9 +1,22 @@
 const BASE = "/api";
 
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const token = await window.Clerk?.session?.getToken();
+    if (token) return { Authorization: `Bearer ${token}` };
+  } catch {}
+  return {};
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+      ...options?.headers,
+    },
     ...options,
   });
 

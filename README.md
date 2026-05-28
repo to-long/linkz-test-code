@@ -430,6 +430,85 @@ After running `bun run db:seed`, you can sign up with any email or use the seede
 
 One payment can cover multiple seats (up to 4). The `seat_ids` field in `payments` stores a JSON array of seat UUIDs for reference, while the `reservations` table provides the normalized 1:N relationship between a payment and its reserved seats.
 
+## Feedback & Upgrade
+
+### Q: What if 100 users try to book 3 seats concurrently?
+
+**What's already safe:**
+
+| Scenario | Guard | Outcome |
+|----------|-------|---------|
+| 2 users hold same seat | `UPDATE ... WHERE status='available'` (atomic) | 1 wins, 1 gets 409 Conflict |
+| Webhook fires twice | `UPDATE ... WHERE payment.status='pending'` | 1st marks complete, 2nd is no-op |
+| Double reservation | `UNIQUE` constraint on `reservations.seatId` | DB rejects duplicate |
+
+The `UPDATE ... WHERE` pattern is atomic at the PostgreSQL level — if 100 users race to hold the same seat, only 1 succeeds. The other 99 get a 409 conflict response immediately. No row-level locks needed for this scale.
+
+**Edge case — hold expires during checkout (SOLVED):**
+
+The original risk: a user's 10-minute hold could expire while they're still on Stripe Checkout (which requires minimum 30 minutes). Two mitigations are now in place:
+
+1. **Hold extension**: When `createCheckoutSession` is called, all held seats have their TTL extended to 30 minutes (matching Stripe's session expiry). This prevents the hold from expiring while the user is entering payment details.
+
+2. **Auto-refund**: If the edge case still occurs (e.g., user takes 30+ minutes), the webhook handler detects that seat reservation failed after payment and automatically issues a full Stripe refund via `stripe.refunds.create()`. Payment status transitions: `pending` → `refund_pending` → `refunded`.
+
+```
+Payment flow with safety net:
+  Hold seat (10 min TTL)
+  → Create checkout → extend hold to 30 min ← NEW
+  → User pays on Stripe
+  → Webhook: reserve seats
+    → Success → status: "completed"
+    → Seats taken → auto-refund → status: "refunded" ← NEW
+```
+
+**What I'd still upgrade for production:**
+
+| Upgrade | Why |
+|---------|-----|
+| `SELECT ... FOR UPDATE` on seat rows | Pessimistic lock prevents read-then-update race under extreme load |
+| Store Stripe `event_id` in a processed-events table | Explicit idempotency instead of relying on status guards |
+| `SERIALIZABLE` isolation for payment transactions | Strongest guarantee against phantom reads |
+| Distributed job queue (BullMQ) for hold expiry | Replace in-memory `setTimeout` for multi-instance deployments |
+
+**Verdict**: For a cinema hall with typical traffic, the current optimistic locking is simple and sufficient. The WHERE-clause guards handle the 100-user scenario correctly — at most 3 users succeed (one per seat). The hold-extension + auto-refund mechanism handles the checkout-timeout edge case gracefully.
+
+### Q: Why store passwords yourself? As a scaling business, shouldn't you use Firebase Auth or Clerk?
+
+**Absolutely — and that's exactly what this project does.** Authentication is delegated to **Clerk** as the identity provider. The backend never stores passwords, password hashes, or manages password reset flows. Clerk handles:
+
+- Password hashing, brute-force protection, and credential storage
+- OAuth 2.0 flows (Google, GitHub, etc.)
+- Email verification, MFA, and session token issuance
+- GDPR-compliant user data management
+
+The backend only verifies Clerk-issued **JWTs** (`clerk.authenticateRequest()`) — it never touches raw credentials. This is the correct separation of concerns for a scaling business:
+
+| Concern | Owner |
+|---------|-------|
+| Identity, passwords, OAuth, MFA | Clerk (managed service) |
+| Authorization (who can hold/book which seat) | Our backend |
+| Session token verification | Our backend (via Clerk SDK) |
+
+**Why Clerk over Firebase Auth?** Both are valid. Clerk was chosen here for its developer experience — built-in React hooks (`useSignIn`, `useSignUp`, `useUser`), backend SDK with `authenticateRequest()`, and no vendor lock-in on the data layer (our DB schema is independent of Clerk). Firebase Auth is equally viable; the key principle is **never manage credentials yourself**.
+
+### Q: Does the session approach handle mobile apps in the future?
+
+**Yes.** The current auth flow is already mobile-compatible because it's **token-based (JWT), not cookie-based**:
+
+1. **How it works now**: The frontend calls `window.Clerk.session.getToken()` and sends it as `Authorization: Bearer <token>` on every API request. The backend validates the JWT via `clerk.authenticateRequest()`. There are no server-side sessions or session cookies involved.
+
+2. **For a mobile app (React Native, Flutter, etc.)**: The exact same pattern works. The mobile app authenticates via Clerk's mobile SDK, receives a JWT, and sends it as a Bearer token. The backend code requires **zero changes** — it already expects and validates Bearer tokens.
+
+```
+Web app:    ClerkProvider → getToken() → Bearer header → Backend validates JWT
+Mobile app: Clerk SDK     → getToken() → Bearer header → Backend validates JWT (same endpoint)
+```
+
+3. **What would NOT work for mobile**: Traditional server-side sessions with `Set-Cookie` headers — mobile apps don't handle cookies the same way browsers do. But since we're already using stateless JWTs, this is a non-issue.
+
+**Summary**: The architecture is API-first with stateless JWT auth. Adding a mobile client means building the UI layer only — the entire backend API is reusable as-is.
+
 ## Time Spent
 
 Approximately 2 hours of focused implementation covering:

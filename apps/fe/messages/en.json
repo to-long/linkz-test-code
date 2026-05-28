@@ -37,7 +37,7 @@
   "proceed_to_payment": "Proceed to Payment",
   "release": "Release",
   "loading_seats": "Loading seats...",
-  "hold_expires_note": "Your hold expires in 10 minutes. Complete payment to confirm your reservation.",
+  "hold_expires_note": "Your hold expires in 10 minutes. Once you proceed to payment, it will be extended to 30 minutes.",
 
   "redirecting_to_stripe": "Redirecting to Stripe Checkout...",
   "secure_payment_redirect": "You'll be redirected to a secure payment page",

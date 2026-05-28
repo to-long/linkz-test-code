@@ -1,11 +1,22 @@
 import * as m from "../../paraglide/messages.js";
-import { signInWithGoogle } from "../../lib/auth-client";
+import { useSignIn } from "@clerk/clerk-react";
 
 export function GoogleSignInButton() {
+  const { signIn } = useSignIn();
+
+  function handleGoogleSignIn() {
+    if (!signIn) return;
+    signIn.authenticateWithRedirect({
+      strategy: "oauth_google",
+      redirectUrl: "/sso-callback",
+      redirectUrlComplete: "/",
+    });
+  }
+
   return (
     <button
       type="button"
-      onClick={() => signInWithGoogle()}
+      onClick={handleGoogleSignIn}
       className="w-full flex items-center justify-center gap-2.5 py-3 px-4 rounded border border-[#D6DDD0] dark:border-[#444] bg-white dark:bg-[#333] text-[#1B3A28] dark:text-[#d0d0d0] text-sm font-medium hover:bg-gray-50 dark:hover:bg-[#3a3a3a] transition-colors"
     >
       <svg className="w-5 h-5" viewBox="0 0 24 24">
